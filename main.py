@@ -22,6 +22,23 @@ from visualize import visdom_plot
 from tensorboardX import SummaryWriter
 import datetime
 
+
+try:
+    import gym_ple
+except ImportError:
+    print("Could not import Python Learning Environment gym envs")
+
+try:
+    import gym_nv_ple
+except ImportError:
+    print("Could not import non-visual Python Learning Environment gym envs")
+
+try:
+    import gridworlds.registration
+    from gridworlds.optimal_planner import OptimalPlanner
+except ImportError:
+    print("Could not import Gridworld environments")
+
 args = get_args()
 
 assert args.algo in ['a2c', 'ppo', 'acktr']
