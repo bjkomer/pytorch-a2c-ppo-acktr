@@ -19,6 +19,9 @@ from storage import RolloutStorage
 from utils import get_vec_normalize
 from visualize import visdom_plot
 
+from tensorboardX import SummaryWriter
+import datetime
+
 args = get_args()
 
 assert args.algo in ['a2c', 'ppo', 'acktr']
@@ -57,6 +60,11 @@ def main():
         from visdom import Visdom
         viz = Visdom(port=args.port)
         win = None
+
+    ts_str = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
+    log_dir = os.path.join(args.save_dir, args.algo, args.env_name, 'tensorboard', ts_str)
+
+    tensorboard_writer = SummaryWriter(log_dir=log_dir)
 
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                         args.gamma, args.log_dir, args.add_timestep, device, False)
@@ -141,6 +149,11 @@ def main():
 
         total_num_steps = (j + 1) * args.num_processes * args.num_steps
 
+        # Putting this separate because I want to save the initial weights to see the change
+        if j % args.log_interval == 0:
+            for name, param in actor_critic.named_parameters():
+                tensorboard_writer.add_histogram('parameters/' + name, param.clone().cpu().data.numpy(), total_num_steps)
+
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             end = time.time()
             print("Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n".
@@ -152,6 +165,17 @@ def main():
                        np.min(episode_rewards),
                        np.max(episode_rewards), dist_entropy,
                        value_loss, action_loss))
+
+
+
+            # from this PR: https://github.com/ikostrikov/pytorch-a2c-ppo-acktr/pull/140/files
+            tensorboard_writer.add_scalar("mean_reward", np.mean(episode_rewards), total_num_steps)
+            tensorboard_writer.add_scalar("median_reward", np.median(episode_rewards), total_num_steps)
+            tensorboard_writer.add_scalar("min_reward", np.min(episode_rewards), total_num_steps)
+            tensorboard_writer.add_scalar("max_reward", np.max(episode_rewards), total_num_steps)
+            tensorboard_writer.add_scalar("dist_entropy", dist_entropy, total_num_steps)
+            tensorboard_writer.add_scalar("value_loss", value_loss, total_num_steps)
+            tensorboard_writer.add_scalar("action_loss", action_loss, total_num_steps)
 
         if (args.eval_interval is not None
                 and len(episode_rewards) > 1
