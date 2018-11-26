@@ -86,8 +86,15 @@ def main():
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                         args.gamma, args.log_dir, args.add_timestep, device, False)
 
-    actor_critic = Policy(envs.observation_space.shape, envs.action_space,
-        base_kwargs={'recurrent': args.recurrent_policy})
+    if args.policy == 'default':
+        actor_critic = Policy(envs.observation_space.shape, envs.action_space,
+            base_kwargs={'recurrent': args.recurrent_policy})
+    elif args.policy == 'VIN':
+        actor_critic = Policy(envs.observation_space.shape, envs.action_space,
+                              base_kwargs={'recurrent': args.recurrent_policy})
+    else:
+        raise NotImplementedError
+
     actor_critic.to(device)
 
     if args.algo == 'a2c':
@@ -103,6 +110,8 @@ def main():
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(actor_critic, args.value_loss_coef,
                                args.entropy_coef, acktr=True)
+    else:
+        raise NotImplementedError
 
     rollouts = RolloutStorage(args.num_steps, args.num_processes,
                         envs.observation_space.shape, envs.action_space,
