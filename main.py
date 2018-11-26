@@ -18,6 +18,7 @@ from model import Policy
 from storage import RolloutStorage
 from utils import get_vec_normalize
 from visualize import visdom_plot
+from utils import update_linear_schedule
 
 from tensorboardX import SummaryWriter
 import datetime
@@ -46,11 +47,14 @@ if args.recurrent_policy:
     assert args.algo in ['a2c', 'ppo'], \
         'Recurrent policy is not implemented for ACKTR'
 
-num_updates = int(args.num_frames) // args.num_steps // args.num_processes
+num_updates = int(args.num_env_steps) // args.num_steps // args.num_processes
 
 torch.manual_seed(args.seed)
-if args.cuda:
-    torch.cuda.manual_seed(args.seed)
+torch.cuda.manual_seed_all(args.seed)
+
+if args.cuda and torch.cuda.is_available() and args.cuda_deterministic:
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 try:
     os.makedirs(args.log_dir)
@@ -125,6 +129,18 @@ def main():
 
     start = time.time()
     for j in range(num_updates):
+
+        if args.use_linear_lr_decay:            
+            # decrease learning rate linearly
+            if args.algo == "acktr":
+                # use optimizer's learning rate since it's hard-coded in kfac.py
+                update_linear_schedule(agent.optimizer, j, num_updates, agent.optimizer.lr)
+            else:
+                update_linear_schedule(agent.optimizer, j, num_updates, args.lr)
+
+        if args.algo == 'ppo' and args.use_linear_lr_decay:      
+            agent.clip_param = args.clip_param  * (1 - j / float(num_updates))
+                
         for step in range(args.num_steps):
             # Sample actions
             with torch.no_grad():
@@ -156,7 +172,8 @@ def main():
 
         rollouts.after_update()
 
-        if j % args.save_interval == 0 and args.save_dir != "":
+        # save for every interval-th episode or for the last epoch
+        if (j % args.save_interval == 0 or j == num_updates - 1) and args.save_dir != "":
             save_path = os.path.join(args.save_dir, args.algo)
             try:
                 os.makedirs(save_path)
@@ -246,7 +263,7 @@ def main():
             try:
                 # Sometimes monitor doesn't properly flush the outputs
                 win = visdom_plot(viz, win, args.log_dir, args.env_name,
-                                  args.algo, args.num_frames)
+                                  args.algo, args.num_env_steps)
             except IOError:
                 pass
 

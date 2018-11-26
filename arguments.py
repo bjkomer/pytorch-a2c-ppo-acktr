@@ -27,6 +27,8 @@ def get_args():
                         help='max norm of gradients (default: 0.5)')
     parser.add_argument('--seed', type=int, default=1,
                         help='random seed (default: 1)')
+    parser.add_argument('--cuda-deterministic', action='store_true', default=False,
+                        help="sets flags for determinism when using CUDA (potentially slow!)")
     parser.add_argument('--num-processes', type=int, default=16,
                         help='how many training CPU processes to use (default: 16)')
     parser.add_argument('--num-steps', type=int, default=5,
@@ -45,8 +47,8 @@ def get_args():
                         help='eval interval, one eval per n updates (default: None)')
     parser.add_argument('--vis-interval', type=int, default=100,
                         help='vis interval, one log per n updates (default: 100)')
-    parser.add_argument('--num-frames', type=int, default=10e6,
-                        help='number of frames to train (default: 10e6)')
+    parser.add_argument('--num-env-steps', type=int, default=10e6,
+                        help='number of environment steps to train (default: 10e6)')
     parser.add_argument('--env-name', default='PongNoFrameskip-v4',
                         help='environment to train on (default: PongNoFrameskip-v4)')
     parser.add_argument('--log-dir', default='/tmp/gym/',
@@ -59,6 +61,10 @@ def get_args():
                         help='add timestep to observations')
     parser.add_argument('--recurrent-policy', action='store_true', default=False,
                         help='use a recurrent policy')
+    parser.add_argument('--use-linear-lr-decay', action='store_true', default=False,
+                        help='use a linear schedule on the learning rate')
+    parser.add_argument('--use-linear-clip-decay', action='store_true', default=False,
+                        help='use a linear schedule on the ppo clipping parameter')
     parser.add_argument('--vis', action='store_true', default=False,
                         help='enable visdom visualization')
     parser.add_argument('--port', type=int, default=8097,

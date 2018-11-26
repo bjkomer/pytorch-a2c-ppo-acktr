@@ -36,10 +36,12 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
             env = dm_control2gym.make(domain_name=domain, task_name=task)
         else:
             env = gym.make(env_id)
+
         is_atari = hasattr(gym.envs, 'atari') and isinstance(
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
         if is_atari:
             env = make_atari(env_id)
+
         env.seed(seed + rank)
 
         obs_shape = env.observation_space.shape
@@ -53,8 +55,13 @@ def make_env(env_id, seed, rank, log_dir, add_timestep, allow_early_resets):
                                 allow_early_resets=allow_early_resets)
 
         if is_atari:
-            env = wrap_deepmind(env)
-
+            if len(env.observation_space.shape) == 3:
+                env = wrap_deepmind(env)
+        elif len(env.observation_space.shape) == 3:
+            raise NotImplementedError("CNN models work only for atari,\n"
+                "please use a custom wrapper for a custom pixel input env.\n"
+                "See wrap_deepmind for an example.")
+        
         # If the input has shape (W,H,3), wrap for PyTorch convolutions
         obs_shape = env.observation_space.shape
         if len(obs_shape) == 3 and obs_shape[2] in [1, 3]:
@@ -203,7 +210,7 @@ class VecPyTorchFrameStack(VecEnvWrapper):
 
     def reset(self):
         obs = self.venv.reset()
-        self.stacked_obs.zero_()
+        self.stacked_obs = torch.zeros(self.stacked_obs.shape)
         self.stacked_obs[:, -self.shape_dim0:] = obs
         return self.stacked_obs
 
