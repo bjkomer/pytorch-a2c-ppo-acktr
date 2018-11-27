@@ -71,6 +71,16 @@ def get_args():
                         help='port to run the server on (default: 8097)')
     parser.add_argument('--policy', type=str, default='default', choices=['default', 'VIN'],
                         help='type of policy to use')
+    parser.add_argument('--curiosity', action='store_true', default=False,
+                        help='use curiosity driven learning')
+    parser.add_argument('--feature-size', type=int, default=64,
+                        help='size of the features for curiosity driven learning')
+    parser.add_argument('--erw', type=float, default=0.0,
+                        help='extrinsic reward weight')
+    parser.add_argument('--irw', type=float, default=1.0,
+                        help='intrinsic reward weight')
+    parser.add_argument('--irsf', type=float, default=1.0,
+                        help='intrinsic reward scaling factor')
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()

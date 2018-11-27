@@ -26,6 +26,10 @@ class RolloutStorage(object):
         self.num_steps = num_steps
         self.step = 0
 
+        # Used for curiosity models
+        # TODO: refactor code to just get this from obs by shifting indices
+        self.prev_obs = torch.zeros(num_steps + 1, num_processes, *obs_shape)
+
     def to(self, device):
         self.obs = self.obs.to(device)
         self.recurrent_hidden_states = self.recurrent_hidden_states.to(device)
@@ -36,7 +40,7 @@ class RolloutStorage(object):
         self.actions = self.actions.to(device)
         self.masks = self.masks.to(device)
 
-    def insert(self, obs, recurrent_hidden_states, actions, action_log_probs, value_preds, rewards, masks):
+    def insert(self, obs, recurrent_hidden_states, actions, action_log_probs, value_preds, rewards, masks, prev_obs=None):
         self.obs[self.step + 1].copy_(obs)
         self.recurrent_hidden_states[self.step + 1].copy_(recurrent_hidden_states)
         self.actions[self.step].copy_(actions)
@@ -44,6 +48,8 @@ class RolloutStorage(object):
         self.value_preds[self.step].copy_(value_preds)
         self.rewards[self.step].copy_(rewards)
         self.masks[self.step + 1].copy_(masks)
+        if prev_obs is not None:
+            self.prev_obs[self.step + 1].copy_(prev_obs)
 
         self.step = (self.step + 1) % self.num_steps
 
@@ -51,6 +57,9 @@ class RolloutStorage(object):
         self.obs[0].copy_(self.obs[-1])
         self.recurrent_hidden_states[0].copy_(self.recurrent_hidden_states[-1])
         self.masks[0].copy_(self.masks[-1])
+
+        # Should this go here?? Seems odd to have prev_obs have the same number of elements as obs
+        self.prev_obs[0].copy_(self.prev_obs[-1])
 
     def compute_returns(self, next_value, use_gae, gamma, tau):
         if use_gae:
@@ -67,7 +76,7 @@ class RolloutStorage(object):
                     gamma * self.masks[step + 1] + self.rewards[step]
 
 
-    def feed_forward_generator(self, advantages, num_mini_batch):
+    def feed_forward_generator(self, advantages, num_mini_batch, curiosity=False):
         num_steps, num_processes = self.rewards.size()[0:2]
         batch_size = num_processes * num_steps
         assert batch_size >= num_mini_batch, (
@@ -88,8 +97,15 @@ class RolloutStorage(object):
             old_action_log_probs_batch = self.action_log_probs.view(-1, 1)[indices]
             adv_targ = advantages.view(-1, 1)[indices]
 
-            yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
-                value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
+            if curiosity:
+                prev_obs_batch = self.prev_obs[:-1].view(-1, *self.prev_obs.size()[2:])[indices]
+
+                yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
+                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ, prev_obs_batch
+            else:
+
+                yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
+                    value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
 
     def recurrent_generator(self, advantages, num_mini_batch):
         num_processes = self.rewards.size(1)

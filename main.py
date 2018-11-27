@@ -23,6 +23,9 @@ from utils import update_linear_schedule
 from tensorboardX import SummaryWriter
 import datetime
 
+from rl_algos.curiosity.models import FeatureEncoder, ForwardModel, InverseModel
+from rl_algos.utils import one_hot
+
 
 try:
     import gym_ple
@@ -83,7 +86,10 @@ def main():
         win = None
 
     ts_str = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
-    log_dir = os.path.join(args.save_dir, args.algo, args.env_name, 'tensorboard', ts_str)
+    if args.curiosity:
+        log_dir = os.path.join(args.save_dir, 'curiosity', args.algo, args.env_name, 'tensorboard', ts_str)
+    else:
+        log_dir = os.path.join(args.save_dir, args.algo, args.env_name, 'tensorboard', ts_str)
 
     tensorboard_writer = SummaryWriter(log_dir=log_dir)
 
@@ -99,6 +105,12 @@ def main():
     else:
         raise NotImplementedError
 
+    if args.curiosity:
+        # TODO: add support for continuous actions
+        feature_encoder = FeatureEncoder(state_size=envs.observation_space.shape[0], feature_size=args.feature_size)
+        forward_model = ForwardModel(feature_size=args.feature_size, action_size=envs.action_space.n)
+        inverse_model = InverseModel(feature_size=args.feature_size, action_size=envs.action_space.n)
+
     actor_critic.to(device)
 
     if args.algo == 'a2c':
@@ -107,10 +119,18 @@ def main():
                                eps=args.eps, alpha=args.alpha,
                                max_grad_norm=args.max_grad_norm)
     elif args.algo == 'ppo':
-        agent = algo.PPO(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
-                         args.value_loss_coef, args.entropy_coef, lr=args.lr,
-                               eps=args.eps,
-                               max_grad_norm=args.max_grad_norm)
+        if args.curiosity:
+            agent = algo.CuriosityPPO(
+                forward_model=forward_model, inverse_model=inverse_model, feature_encoder=feature_encoder,
+                actor_critic=actor_critic, clip_param=args.clip_param, ppo_epoch=args.ppo_epoch,
+                num_mini_batch=args.num_mini_batch, value_loss_coef=args.value_loss_coef,
+                entropy_coef=args.entropy_coef, lr=args.lr, eps=args.eps, max_grad_norm=args.max_grad_norm
+            )
+        else:
+            agent = algo.PPO(actor_critic, args.clip_param, args.ppo_epoch, args.num_mini_batch,
+                             args.value_loss_coef, args.entropy_coef, lr=args.lr,
+                                   eps=args.eps,
+                                   max_grad_norm=args.max_grad_norm)
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(actor_critic, args.value_loss_coef,
                                args.entropy_coef, acktr=True)
@@ -122,6 +142,7 @@ def main():
                         actor_critic.recurrent_hidden_state_size)
 
     obs = envs.reset()
+    prev_obs = torch.Tensor(obs.shape)
     rollouts.obs[0].copy_(obs)
     rollouts.to(device)
 
@@ -139,7 +160,7 @@ def main():
                 update_linear_schedule(agent.optimizer, j, num_updates, args.lr)
 
         if args.algo == 'ppo' and args.use_linear_lr_decay:      
-            agent.clip_param = args.clip_param  * (1 - j / float(num_updates))
+            agent.clip_param = args.clip_param * (1 - j / float(num_updates))
                 
         for step in range(args.num_steps):
             # Sample actions
@@ -149,8 +170,23 @@ def main():
                         rollouts.recurrent_hidden_states[step],
                         rollouts.masks[step])
 
+            # prev_obs = obs.copy()
+            prev_obs.copy_(obs)
+
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
+
+            if args.curiosity:
+                # TODO: make sure the operations here on on the correct dimensions for the vectors given
+                with torch.no_grad():
+                    next_features_pred = forward_model(feature_encoder(prev_obs),
+                                                       one_hot(action, max_val=forward_model.action_size))
+
+                    # Calculate intrinsic reward
+                    # reward_i = args.irsf * torch.sum(torch.square(next_features_pred - feature_encoder(obs)), axis=1, keepdims=False) / 2.
+                    reward_i = args.irsf * torch.sum((next_features_pred - feature_encoder(obs)**2), 1, keepdim=True) / 2.
+
+                    reward = reward * args.erw + reward_i * args.irw
 
             for info in infos:
                 if 'episode' in info.keys():
@@ -159,7 +195,12 @@ def main():
             # If done then clean the history of observations.
             masks = torch.FloatTensor([[0.0] if done_ else [1.0]
                                        for done_ in done])
-            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks)
+
+            # NOTE: only curiosity models will use prev_obs
+            #       there should be a way to not need it, since the information is already there,
+            #       but this is easier for now, ensures no indexing bugs show up
+            rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks, prev_obs)
+
 
         with torch.no_grad():
             next_value = actor_critic.get_value(rollouts.obs[-1],
