@@ -81,6 +81,8 @@ def get_args():
                         help='intrinsic reward weight')
     parser.add_argument('--irsf', type=float, default=1.0,
                         help='intrinsic reward scaling factor')
+    parser.add_argument('--log-histograms', action='store_true', default=False,
+                        help='store histograms of weights to tensorboard')
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()

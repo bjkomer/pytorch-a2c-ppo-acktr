@@ -148,6 +148,9 @@ def main():
 
     episode_rewards = deque(maxlen=10)
 
+    episode_i_rewards = deque(maxlen=10)
+    episode_e_rewards = deque(maxlen=10)
+
     start = time.time()
     for j in range(num_updates):
 
@@ -176,6 +179,10 @@ def main():
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
 
+            # print(reward)
+            # print(obs)
+            # print(done)
+
             if args.curiosity:
                 # TODO: make sure the operations here on on the correct dimensions for the vectors given
                 with torch.no_grad():
@@ -186,10 +193,16 @@ def main():
                     # reward_i = args.irsf * torch.sum(torch.square(next_features_pred - feature_encoder(obs)), axis=1, keepdims=False) / 2.
                     reward_i = args.irsf * torch.sum((next_features_pred - feature_encoder(obs)**2), 1, keepdim=True) / 2.
 
+                    # Keep track of intrinsic and extrinsic reward for tensorboard
+                    episode_i_rewards.append(reward_i[0])  # NOTE: super dumb hack
+                    episode_e_rewards.append(reward[0])  # NOTE: super dumb hack
+
                     reward = reward * args.erw + reward_i * args.irw
 
+            # print("start of loop")
             for info in infos:
                 if 'episode' in info.keys():
+                    # print(info['episode']['r'])
                     episode_rewards.append(info['episode']['r'])
 
             # If done then clean the history of observations.
@@ -200,7 +213,6 @@ def main():
             #       there should be a way to not need it, since the information is already there,
             #       but this is easier for now, ensures no indexing bugs show up
             rollouts.insert(obs, recurrent_hidden_states, action, action_log_prob, value, reward, masks, prev_obs)
-
 
         with torch.no_grad():
             next_value = actor_critic.get_value(rollouts.obs[-1],
@@ -235,8 +247,9 @@ def main():
 
         # Putting this separate because I want to save the initial weights to see the change
         if j % args.log_interval == 0:
-            for name, param in actor_critic.named_parameters():
-                tensorboard_writer.add_histogram('parameters/' + name, param.clone().cpu().data.numpy(), total_num_steps)
+            if args.log_histograms:
+                for name, param in actor_critic.named_parameters():
+                    tensorboard_writer.add_histogram('parameters/' + name, param.clone().cpu().data.numpy(), total_num_steps)
 
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
             end = time.time()
@@ -260,6 +273,13 @@ def main():
             tensorboard_writer.add_scalar("dist_entropy", dist_entropy, total_num_steps)
             tensorboard_writer.add_scalar("value_loss", value_loss, total_num_steps)
             tensorboard_writer.add_scalar("action_loss", action_loss, total_num_steps)
+
+            if args.curiosity:
+                # print(episode_i_rewards)
+                # print(episode_e_rewards)
+                # print(episode_rewards)
+                tensorboard_writer.add_scalar("mean_intrinsic_reward", np.mean(episode_i_rewards), total_num_steps)
+                tensorboard_writer.add_scalar("mean_extrinsic_reward", np.mean(episode_e_rewards), total_num_steps)
 
         if (args.eval_interval is not None
                 and len(episode_rewards) > 1
